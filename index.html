@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a1a">
+  <title>SMPLR-8</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="device">
+
+    <header class="te-header">
+      <span class="te-logo">SMPLR-8</span>
+      <span class="te-status-right">
+        <span class="te-clock" id="clock">--:--</span>
+        <span class="te-batt">■■■□</span>
+      </span>
+    </header>
+
+    <section class="te-display">
+      <div class="te-status-bar">
+        <span class="mode-label" id="mode-label">PLAY</span>
+        <span class="pad-name-display" id="pad-name-display">-- SELECT PAD --</span>
+        <span class="te-info" id="te-info">READY</span>
+      </div>
+      <canvas class="waveform-display" id="waveform-display"></canvas>
+    </section>
+
+    <main class="pad-grid" id="pad-grid"></main>
+
+    <div class="te-speaker-strip">
+      <div class="speaker-dots"></div>
+    </div>
+
+    <footer class="te-controls">
+      <button class="ctrl-btn active" id="mode-play" data-mode="play">PLAY</button>
+      <button class="ctrl-btn" id="mode-rec" data-mode="rec">REC</button>
+      <button class="ctrl-btn" id="mode-load" data-mode="load">LOAD</button>
+      <button class="ctrl-btn" id="mode-clr" data-mode="clr">CLR</button>
+    </footer>
+
+  </div>
+
+  <input type="file" id="file-input" accept="audio/*" style="display:none">
+
+  <div class="rename-overlay" id="rename-overlay" hidden>
+    <div class="rename-box">
+      <div class="rename-label">RENAME PAD</div>
+      <input type="text" class="rename-input" id="rename-input" maxlength="8" autocomplete="off" autocorrect="off" spellcheck="false">
+      <div class="rename-actions">
+        <button class="ctrl-btn" id="rename-cancel">CANCEL</button>
+        <button class="ctrl-btn active" id="rename-confirm">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>
