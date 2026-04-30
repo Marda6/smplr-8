@@ -41,16 +41,38 @@ const AudioEngine = {
 
   play(pad) {
     if (!pad.audioBuffer) return;
+    this.stop(pad); // stop previous if retriggered
     const ctx = this.getCtx();
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(1, ctx.currentTime);
     const src = ctx.createBufferSource();
     src.buffer = pad.audioBuffer;
-    src.connect(ctx.destination);
-    pad.el.classList.add('is-playing');
-    src.onended = () => pad.el.classList.remove('is-playing');
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.onended = () => {
+      pad.el.classList.remove('is-playing');
+      if (pad.sourceNode === src) pad.sourceNode = null;
+    };
     src.start(0);
+    pad.sourceNode = src;
+    pad.gainNode = gain;
+    pad.el.classList.add('is-playing');
     pad.playbackStart = ctx.currentTime;
     pad.playbackDuration = pad.audioBuffer.duration;
     WaveformRenderer.startPlaybackLine(pad);
+  },
+
+  stop(pad) {
+    if (!pad.sourceNode) return;
+    const ctx = this.getCtx();
+    const gain = pad.gainNode;
+    const src = pad.sourceNode;
+    pad.sourceNode = null;
+    // 10ms fade-out to avoid click
+    gain.gain.setValueAtTime(gain.gain.value, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.01);
+    src.stop(ctx.currentTime + 0.015);
+    pad.el.classList.remove('is-playing');
   },
 };
 
@@ -363,20 +385,19 @@ const PadManager = {
       btn.addEventListener('touchstart', e => { e.preventDefault(); this._onPadDown(pad); }, { passive: false });
       btn.addEventListener('mousedown', e => { e.preventDefault(); this._onPadDown(pad); });
 
-      btn.addEventListener('touchend', e => { e.preventDefault(); clearTimeout(AppState.longPressTimer); }, { passive: false });
-      btn.addEventListener('mouseup', () => clearTimeout(AppState.longPressTimer));
+      btn.addEventListener('touchend', e => { e.preventDefault(); this._onPadUp(pad); }, { passive: false });
+      btn.addEventListener('touchcancel', e => { e.preventDefault(); this._onPadUp(pad); }, { passive: false });
+      btn.addEventListener('mouseup', () => this._onPadUp(pad));
+      btn.addEventListener('mouseleave', () => this._onPadUp(pad));
     }
   },
 
   _onPadDown(pad) {
-    AudioEngine.getCtx(); // ensure init on first gesture
-
+    AudioEngine.getCtx();
     clearTimeout(AppState.longPressTimer);
-
     const mode = AppState.mode;
 
     if (mode === 'play') {
-      // Long press → rename
       AppState.longPressTimer = setTimeout(() => UIController.openRename(pad), 500);
       if (pad.audioBuffer) AudioEngine.play(pad);
       UIController.selectPad(pad);
@@ -402,6 +423,13 @@ const PadManager = {
       this.clearPad(pad);
       UIController.selectPad(pad);
       return;
+    }
+  },
+
+  _onPadUp(pad) {
+    clearTimeout(AppState.longPressTimer);
+    if (AppState.mode === 'play') {
+      AudioEngine.stop(pad);
     }
   },
 
