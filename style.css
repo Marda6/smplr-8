@@ -28,13 +28,17 @@
   --font:        'Courier New', 'Courier', monospace;
 }
 
-html, body {
+html {
+  height: 100%;
+  height: -webkit-fill-available;
+}
+
+body {
   width: 100%;
   height: 100%;
+  height: -webkit-fill-available;
   background: var(--bg);
   display: flex;
-  justify-content: center;
-  align-items: stretch;
   font-family: var(--font);
   overflow: hidden;
 }
@@ -42,7 +46,7 @@ html, body {
 /* ── Device shell ────────────────────────────────────── */
 .device {
   width: 100%;
-  max-width: 430px;
+  height: 100svh;
   height: 100dvh;
   height: 100vh;
   background: var(--device-bg);
@@ -135,20 +139,79 @@ html, body {
 .waveform-display {
   display: block;
   width: 100%;
-  height: 68px;
+  height: 60px;
   border: 1px solid #1a1a1a;
   background: var(--display-bg);
   border-radius: 2px;
 }
 
+/* ── Speaker strip ───────────────────────────────────── */
+.te-speaker-strip {
+  height: 16px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  flex-shrink: 0;
+}
+
+.speaker-dots {
+  flex: 1;
+  height: 4px;
+  background-image: radial-gradient(circle, #333 1px, transparent 1px);
+  background-size: 5px 5px;
+  border-radius: 2px;
+  opacity: 0.7;
+}
+
+/* ── Footer Controls ─────────────────────────────────── */
+.te-controls {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px 8px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ctrl-btn {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  padding: 9px 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow:
+    inset 0 1px 0 #383838,
+    inset 0 -2px 0 #111;
+  transition: all 80ms ease;
+}
+
+.ctrl-btn:active {
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.6);
+  transform: translateY(1px);
+}
+
+.ctrl-btn.active {
+  border-color: var(--orange);
+  color: var(--orange);
+  background: #1e1108;
+}
+
 /* ── Pad Grid ────────────────────────────────────────── */
+/* Portrait: 3 cols × 4 rows */
 .pad-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(4, 1fr);
   gap: 7px;
-  padding: 12px 12px 8px;
+  padding: 10px;
   flex: 1;
-  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
 }
 
 /* ── Pad Button ──────────────────────────────────────── */
@@ -162,8 +225,9 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  padding: 0 0 6px 7px;
+  padding: 0 0 5px 6px;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   box-shadow:
     inset 0 1px 0 #383838,
@@ -184,7 +248,7 @@ html, body {
   border-color: var(--orange-dim);
 }
 
-/* Waveform thumbnail inside pad */
+/* Waveform thumbnail */
 .pad-wave {
   position: absolute;
   top: 0;
@@ -223,8 +287,8 @@ html, body {
 /* State dot */
 .pad-dot {
   position: absolute;
-  top: 7px;
-  right: 7px;
+  top: 6px;
+  right: 6px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -232,79 +296,14 @@ html, body {
   transition: background 200ms ease;
 }
 
-.pad.has-sample .pad-dot {
-  background: var(--orange);
-}
-
+.pad.has-sample .pad-dot  { background: var(--orange); }
 .pad.is-recording .pad-dot {
   background: var(--red);
   animation: pulse-dot 0.55s infinite alternate;
 }
+.pad.is-playing .pad-dot  { background: var(--white); }
 
-.pad.is-playing .pad-dot {
-  background: var(--white);
-}
-
-@keyframes pulse-dot {
-  to { opacity: 0.15; }
-}
-
-/* ── Speaker strip ───────────────────────────────────── */
-.te-speaker-strip {
-  height: 20px;
-  display: flex;
-  align-items: center;
-  padding: 0 14px;
-  flex-shrink: 0;
-}
-
-.speaker-dots {
-  flex: 1;
-  height: 5px;
-  background-image: radial-gradient(circle, #333 1px, transparent 1px);
-  background-size: 5px 5px;
-  border-radius: 2px;
-  opacity: 0.7;
-}
-
-/* ── Footer Controls ─────────────────────────────────── */
-.te-controls {
-  display: flex;
-  gap: 6px;
-  padding: 8px 12px 12px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.ctrl-btn {
-  flex: 1;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--text-dim);
-  font-family: var(--font);
-  font-size: 9px;
-  letter-spacing: 0.25em;
-  padding: 10px 4px;
-  cursor: pointer;
-  touch-action: manipulation;
-  box-shadow:
-    inset 0 1px 0 #383838,
-    inset 0 -2px 0 #111;
-  transition: all 80ms ease;
-}
-
-.ctrl-btn:active {
-  box-shadow:
-    inset 0 2px 4px rgba(0,0,0,0.6);
-  transform: translateY(1px);
-}
-
-.ctrl-btn.active {
-  border-color: var(--orange);
-  color: var(--orange);
-  background: #1e1108;
-}
+@keyframes pulse-dot { to { opacity: 0.15; } }
 
 /* ── Rename overlay ──────────────────────────────────── */
 .rename-overlay {
@@ -317,9 +316,7 @@ html, body {
   z-index: 100;
 }
 
-.rename-overlay[hidden] {
-  display: none;
-}
+.rename-overlay[hidden] { display: none; }
 
 .rename-box {
   background: var(--surface);
@@ -354,18 +351,11 @@ html, body {
   -webkit-user-select: text;
 }
 
-.rename-input:focus {
-  border-color: var(--orange-dim);
-}
+.rename-input:focus { border-color: var(--orange-dim); }
 
 .rename-actions {
   display: flex;
   gap: 8px;
-}
-
-/* ── REC mode: live rec indicator in display ─────────── */
-.mode-rec-active .mode-label {
-  color: var(--red);
 }
 
 /* ── Scrollbar hide ──────────────────────────────────── */
@@ -373,48 +363,40 @@ html, body {
 
 /* ── Landscape layout ────────────────────────────────── */
 @media (orientation: landscape) {
-  html, body {
-    align-items: stretch;
-  }
-
   .device {
     flex-direction: row;
-    max-width: 100%;
-    width: 100%;
   }
 
-  /* Left sidebar: panel */
+  /* Left sidebar */
   .te-panel {
-    width: min(220px, 32vw);
+    width: min(200px, 30vw);
     flex-shrink: 0;
     border-right: 1px solid var(--border);
-    border-bottom: none;
   }
 
-  /* Display waveform: shorter in landscape */
   .waveform-display {
-    height: 52px;
+    height: 48px;
   }
 
-  /* Speaker strip horizontal becomes a divider */
+  /* Speaker strip fills remaining sidebar height */
   .te-speaker-strip {
     flex: 1;
     height: auto;
-    padding: 6px 14px;
+    padding: 8px 14px;
     align-items: flex-start;
   }
 
   .speaker-dots {
     width: 100%;
     height: 100%;
+    min-height: 8px;
   }
 
-  /* Controls stack vertically in sidebar */
+  /* Controls stack vertically */
   .te-controls {
     flex-direction: column;
-    padding: 8px 10px 12px;
+    padding: 8px 10px 10px;
     gap: 5px;
-    border-top: 1px solid var(--border);
   }
 
   .ctrl-btn {
@@ -423,7 +405,7 @@ html, body {
     padding: 9px 4px;
   }
 
-  /* Pad grid: takes all remaining horizontal space */
+  /* Pad grid: 4 cols × 3 rows, fills all remaining space */
   .pad-grid {
     flex: 1;
     grid-template-columns: repeat(4, 1fr);
