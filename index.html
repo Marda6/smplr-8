@@ -14,35 +14,39 @@
 
   <div class="device">
 
-    <header class="te-header">
-      <span class="te-logo">SMPLR-8</span>
-      <span class="te-status-right">
-        <span class="te-clock" id="clock">--:--</span>
-        <span class="te-batt">■■■□</span>
-      </span>
-    </header>
+    <div class="te-panel">
 
-    <section class="te-display">
-      <div class="te-status-bar">
-        <span class="mode-label" id="mode-label">PLAY</span>
-        <span class="pad-name-display" id="pad-name-display">-- SELECT PAD --</span>
-        <span class="te-info" id="te-info">READY</span>
+      <header class="te-header">
+        <span class="te-logo">SMPLR-8</span>
+        <span class="te-status-right">
+          <span class="te-clock" id="clock">--:--</span>
+          <span class="te-batt">■■■□</span>
+        </span>
+      </header>
+
+      <section class="te-display">
+        <div class="te-status-bar">
+          <span class="mode-label" id="mode-label">PLAY</span>
+          <span class="pad-name-display" id="pad-name-display">-- SELECT PAD --</span>
+          <span class="te-info" id="te-info">READY</span>
+        </div>
+        <canvas class="waveform-display" id="waveform-display"></canvas>
+      </section>
+
+      <div class="te-speaker-strip">
+        <div class="speaker-dots"></div>
       </div>
-      <canvas class="waveform-display" id="waveform-display"></canvas>
-    </section>
 
-    <main class="pad-grid" id="pad-grid"></main>
+      <footer class="te-controls">
+        <button class="ctrl-btn active" id="mode-play" data-mode="play">PLAY</button>
+        <button class="ctrl-btn" id="mode-rec" data-mode="rec">REC</button>
+        <button class="ctrl-btn" id="mode-load" data-mode="load">LOAD</button>
+        <button class="ctrl-btn" id="mode-clr" data-mode="clr">CLR</button>
+      </footer>
 
-    <div class="te-speaker-strip">
-      <div class="speaker-dots"></div>
     </div>
 
-    <footer class="te-controls">
-      <button class="ctrl-btn active" id="mode-play" data-mode="play">PLAY</button>
-      <button class="ctrl-btn" id="mode-rec" data-mode="rec">REC</button>
-      <button class="ctrl-btn" id="mode-load" data-mode="load">LOAD</button>
-      <button class="ctrl-btn" id="mode-clr" data-mode="clr">CLR</button>
-    </footer>
+    <main class="pad-grid" id="pad-grid"></main>
 
   </div>
 
