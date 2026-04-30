@@ -1,5 +1,14 @@
 'use strict';
 
+// Sets --app-height to window.innerHeight so the layout fills exactly the
+// visible viewport on all mobile browsers (Chrome Android ignores -webkit-fill-available)
+function setAppHeight() {
+  document.documentElement.style.setProperty('--app-height', window.innerHeight + 'px');
+}
+window.addEventListener('resize', setAppHeight);
+window.addEventListener('orientationchange', () => setTimeout(setAppHeight, 100));
+setAppHeight();
+
 const PAD_COUNT = 12;
 const DB_NAME = 'smplr-db';
 const DB_VERSION = 1;

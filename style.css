@@ -28,26 +28,19 @@
   --font:        'Courier New', 'Courier', monospace;
 }
 
-html {
-  height: 100%;
-  height: -webkit-fill-available;
-  overflow: hidden;
-}
-
-body {
+html, body {
   width: 100%;
   height: 100%;
-  height: -webkit-fill-available;
   background: var(--bg);
   display: flex;
-  font-family: var(--font);
   overflow: hidden;
+  font-family: var(--font);
 }
 
 /* ── Device shell ────────────────────────────────────── */
 .device {
   width: 100%;
-  height: 100%;
+  height: var(--app-height, 100vh);
   background: var(--device-bg);
   display: flex;
   flex-direction: column;
