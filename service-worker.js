@@ -1,4 +1,4 @@
-const CACHE = 'smplr-v1';
+const CACHE = 'smplr-v2';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.json'];
 
 self.addEventListener('install', e => {
