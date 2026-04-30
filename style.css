@@ -31,6 +31,7 @@
 html {
   height: 100%;
   height: -webkit-fill-available;
+  overflow: hidden;
 }
 
 body {
@@ -46,9 +47,7 @@ body {
 /* ── Device shell ────────────────────────────────────── */
 .device {
   width: 100%;
-  height: 100svh;
-  height: 100dvh;
-  height: 100vh;
+  height: 100%;
   background: var(--device-bg);
   display: flex;
   flex-direction: column;
@@ -378,31 +377,34 @@ body {
     height: 48px;
   }
 
-  /* Speaker strip fills remaining sidebar height */
+  /* Speaker strip: small fixed strip */
   .te-speaker-strip {
     flex: 1;
     height: auto;
-    padding: 8px 14px;
-    align-items: flex-start;
+    min-height: 8px;
+    max-height: 32px;
+    padding: 4px 14px;
+    align-items: center;
   }
 
   .speaker-dots {
     width: 100%;
     height: 100%;
-    min-height: 8px;
   }
 
-  /* Controls stack vertically */
+  /* Controls stack vertically, fill remaining sidebar space */
   .te-controls {
     flex-direction: column;
-    padding: 8px 10px 10px;
-    gap: 5px;
+    padding: 6px 8px 8px;
+    gap: 4px;
+    flex: 1;
   }
 
   .ctrl-btn {
-    flex: none;
+    flex: 1;
     width: 100%;
-    padding: 9px 4px;
+    padding: 0 4px;
+    min-height: 0;
   }
 
   /* Pad grid: 4 cols × 3 rows, fills all remaining space */
