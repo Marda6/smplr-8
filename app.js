@@ -398,7 +398,6 @@ const PadManager = {
     const mode = AppState.mode;
 
     if (mode === 'play') {
-      AppState.longPressTimer = setTimeout(() => UIController.openRename(pad), 500);
       if (pad.audioBuffer) AudioEngine.play(pad);
       UIController.selectPad(pad);
       return;
@@ -427,7 +426,6 @@ const PadManager = {
   },
 
   _onPadUp(pad) {
-    clearTimeout(AppState.longPressTimer);
     if (AppState.mode === 'play') {
       AudioEngine.stop(pad);
     }
@@ -502,6 +500,11 @@ const UIController = {
 
     this.fileInput.addEventListener('change', () => this._onFileChange());
 
+    // Tap pad name in display → rename selected pad
+    const nameDisplay = document.getElementById('pad-name-display');
+    nameDisplay.addEventListener('click', () => this._renameActive());
+    nameDisplay.addEventListener('touchstart', e => { e.preventDefault(); this._renameActive(); }, { passive: false });
+
     document.getElementById('rename-confirm').addEventListener('click', () => this._confirmRename());
     document.getElementById('rename-cancel').addEventListener('click', () => this._closeRename());
     document.getElementById('rename-input').addEventListener('keydown', e => {
@@ -561,6 +564,11 @@ const UIController = {
     }
     this.fileInput.value = '';
     this.setMode('play');
+  },
+
+  _renameActive() {
+    if (AppState.activePadIndex === null) return;
+    this.openRename(PadManager.pads[AppState.activePadIndex]);
   },
 
   openRename(pad) {
