@@ -1,628 +1,582 @@
 'use strict';
 
-// Sets --app-height to window.innerHeight so the layout fills exactly the
-// visible viewport on all mobile browsers (Chrome Android ignores -webkit-fill-available)
+/* ── Viewport height fix ──────────────────────────────────────────────────── */
 function setAppHeight() {
   document.documentElement.style.setProperty('--app-height', window.innerHeight + 'px');
 }
 window.addEventListener('resize', setAppHeight);
-window.addEventListener('orientationchange', () => setTimeout(setAppHeight, 100));
+window.addEventListener('orientationchange', () => setTimeout(setAppHeight, 150));
 setAppHeight();
 
-const PAD_COUNT = 12;
-const DB_NAME = 'smplr-db';
-const DB_VERSION = 1;
-const STORE_NAME = 'pad-audio';
+/* ── Note data ────────────────────────────────────────────────────────────── */
+const NOTE_NAMES  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const WHITE_SEMI  = [0, 2, 4, 5, 7, 9, 11]; // semitone offsets per octave (white keys)
+const BLACK_SEMI  = [1, 3, 6, 8, 10];        // semitone offsets per octave (black keys)
+// After which white-key index (0-based, across full 2-octave keyboard) does each black key sit?
+// Octave 1: C(0) D(1) E(2) F(3) G(4) A(5) B(6)  → black after 0,1,3,4,5
+// Octave 2: C(7) D(8) E(9) F(10) G(11) A(12) B(13) → black after 7,8,10,11,12
+const BLACK_AFTER_WHITE = [0, 1, 3, 4, 5,  7, 8, 10, 11, 12];
+const BASE_MIDI = 48; // C3
 
-// ── AppState ──────────────────────────────────────────────────────────────────
+function midiToFreq(midi) {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+function midiToName(midi) {
+  const oct = Math.floor(midi / 12) - 1;
+  return NOTE_NAMES[midi % 12] + oct;
+}
+
+/* ── App state ────────────────────────────────────────────────────────────── */
 const AppState = {
-  mode: 'play',          // 'play' | 'rec' | 'load' | 'clr'
-  activePadIndex: null,
-  isRecording: false,
-  recordingPadIndex: null,
-  longPressTimer: null,
+  waveform:    'sine',
+  octaveShift: 0,   // -2 … +2
 };
 
-// ── AudioEngine ───────────────────────────────────────────────────────────────
+/* ── Audio engine ─────────────────────────────────────────────────────────── */
 const AudioEngine = {
-  ctx: null,
+  ctx:       null,
+  masterGain: null,
+  analyser:   null,
+  lfo:        null,
+  lfoGain:    null,
 
   getCtx() {
-    if (!this.ctx) {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    }
+    if (!this.ctx) this._init();
     if (this.ctx.state === 'suspended') this.ctx.resume();
     return this.ctx;
   },
 
-  async decode(arrayBuffer) {
-    return this.getCtx().decodeAudioData(arrayBuffer.slice(0));
+  _init() {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    this.ctx = ctx;
+
+    /* compressor → destination */
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.knee.value = 6;
+    comp.ratio.value = 4;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.12;
+    comp.connect(ctx.destination);
+
+    /* analyser → compressor */
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.connect(comp);
+    this.analyser = analyser;
+
+    /* masterGain → analyser */
+    const mg = ctx.createGain();
+    mg.gain.value = 0.65;
+    mg.connect(analyser);
+    this.masterGain = mg;
+
+    /* LFO for vibrato (always running, depth controls mix) */
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 5.5; // Hz
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0;
+    lfo.connect(lfoGain);
+    lfo.start();
+    this.lfo = lfo;
+    this.lfoGain = lfoGain;
   },
 
-  play(pad) {
-    if (!pad.audioBuffer) return;
-    this.stop(pad); // stop previous if retriggered
+  setVibratoDepth(depth /* 0-1 */) {
+    if (!this.ctx) return;
+    // At depth=1 → ~55 Hz modulation depth (roughly a semitone at middle C area)
+    this.lfoGain.gain.setTargetAtTime(depth * 55, this.ctx.currentTime, 0.06);
+  },
+
+  createVoice(baseMidi) {
     const ctx = this.getCtx();
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(1, ctx.currentTime);
-    const src = ctx.createBufferSource();
-    src.buffer = pad.audioBuffer;
-    src.connect(gain);
-    gain.connect(ctx.destination);
-    src.onended = () => {
-      pad.el.classList.remove('is-playing');
-      if (pad.sourceNode === src) pad.sourceNode = null;
+    const midi  = baseMidi + AppState.octaveShift * 12;
+    const freq  = midiToFreq(Math.max(21, Math.min(108, midi)));
+
+    const osc = ctx.createOscillator();
+    osc.type = AppState.waveform;
+    osc.frequency.value = freq;
+
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, ctx.currentTime);
+    env.gain.linearRampToValueAtTime(0.55, ctx.currentTime + 0.008); // attack 8 ms
+
+    osc.connect(env);
+    env.connect(this.masterGain);
+    this.lfoGain.connect(osc.frequency); // vibrato
+    osc.start();
+
+    return { osc, env, midi };
+  },
+
+  releaseVoice(voice) {
+    if (!voice || !this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    voice.env.gain.cancelScheduledValues(now);
+    voice.env.gain.setValueAtTime(voice.env.gain.value, now);
+    voice.env.gain.linearRampToValueAtTime(0, now + 0.22); // release 220 ms
+    voice.osc.stop(now + 0.25);
+    // Clean up LFO connection after oscillator ends
+    voice.osc.onended = () => {
+      try { this.lfoGain.disconnect(voice.osc.frequency); } catch (_) {}
     };
-    src.start(0);
-    pad.sourceNode = src;
-    pad.gainNode = gain;
-    pad.el.classList.add('is-playing');
-    pad.playbackStart = ctx.currentTime;
-    pad.playbackDuration = pad.audioBuffer.duration;
-    WaveformRenderer.startPlaybackLine(pad);
-  },
-
-  stop(pad) {
-    if (!pad.sourceNode) return;
-    const ctx = this.getCtx();
-    const gain = pad.gainNode;
-    const src = pad.sourceNode;
-    pad.sourceNode = null;
-    // 10ms fade-out to avoid click
-    gain.gain.setValueAtTime(gain.gain.value, ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.01);
-    src.stop(ctx.currentTime + 0.015);
-    pad.el.classList.remove('is-playing');
   },
 };
 
-// ── StorageManager ────────────────────────────────────────────────────────────
-const StorageManager = {
-  db: null,
-
-  async open() {
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME);
-      req.onsuccess = e => { this.db = e.target.result; resolve(); };
-      req.onerror = () => reject(req.error);
-    });
-  },
-
-  async savePadAudio(index, arrayBuffer) {
-    if (!this.db) return;
-    const tx = this.db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(arrayBuffer, index);
-  },
-
-  async loadPadAudio(index) {
-    if (!this.db) return null;
-    return new Promise(resolve => {
-      const tx = this.db.transaction(STORE_NAME, 'readonly');
-      const req = tx.objectStore(STORE_NAME).get(index);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
-  },
-
-  async deletePadAudio(index) {
-    if (!this.db) return;
-    const tx = this.db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(index);
-  },
-
-  saveName(index, name) {
-    localStorage.setItem(`smplr_pad_${index}_name`, name);
-  },
-
-  loadName(index) {
-    return localStorage.getItem(`smplr_pad_${index}_name`) || `PAD ${String(index + 1).padStart(2, '0')}`;
-  },
-
-  deleteName(index) {
-    localStorage.removeItem(`smplr_pad_${index}_name`);
-  },
-};
-
-// ── WaveformRenderer ──────────────────────────────────────────────────────────
-const WaveformRenderer = {
-  mainCanvas: null,
-  mainCtx: null,
-  playbackRaf: null,
+/* ── Vibrato wheel ────────────────────────────────────────────────────────── */
+const WheelUI = {
+  canvas:   null,
+  valueEl:  null,
+  depth:    0,      // 0-1, vibrato depth
+  _rot:     0,      // visual rotation offset (px, scrolls with drag)
+  _dragging: false,
+  _lastY:   0,
 
   init() {
-    this.mainCanvas = document.getElementById('waveform-display');
-    this.mainCtx = this.mainCanvas.getContext('2d');
+    this.canvas  = document.getElementById('vibrato-wheel');
+    this.valueEl = document.getElementById('wheel-value');
+    // Size canvas after first paint
+    requestAnimationFrame(() => {
+      this._syncSize();
+      this._draw();
+    });
+    this._bindEvents();
+    window.addEventListener('resize', () => { this._syncSize(); this._draw(); });
+  },
+
+  _syncSize() {
+    const w = this.canvas.parentElement.clientWidth  - 10; // panel padding
+    const h = this.canvas.clientHeight || this.canvas.parentElement.clientHeight - 40;
+    this.canvas.width  = Math.round(w * devicePixelRatio);
+    this.canvas.height = Math.round(h * devicePixelRatio);
+    this.canvas.style.width  = w + 'px';
+    this.canvas.style.height = h + 'px';
+  },
+
+  _bindEvents() {
+    const el = this.canvas;
+
+    el.addEventListener('touchstart', e => {
+      e.preventDefault();
+      AudioEngine.getCtx();
+      this._dragging = true;
+      this._lastY = e.touches[0].clientY;
+    }, { passive: false });
+
+    el.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (!this._dragging) return;
+      this._move(e.touches[0].clientY);
+    }, { passive: false });
+
+    el.addEventListener('touchend',   e => { e.preventDefault(); this._dragging = false; }, { passive: false });
+    el.addEventListener('touchcancel', e => { e.preventDefault(); this._dragging = false; }, { passive: false });
+
+    /* mouse fallback for desktop testing */
+    el.addEventListener('mousedown', e => { AudioEngine.getCtx(); this._dragging = true; this._lastY = e.clientY; });
+    window.addEventListener('mousemove', e => { if (this._dragging) this._move(e.clientY); });
+    window.addEventListener('mouseup',   () => { this._dragging = false; });
+  },
+
+  _move(clientY) {
+    const dy = clientY - this._lastY;
+    this._lastY = clientY;
+    // drag down = more vibrato
+    this.depth = Math.max(0, Math.min(1, this.depth + dy / (this.canvas.clientHeight || 160) * 2));
+    this._rot  = (this._rot + dy * 1.4) % 1000;
+    AudioEngine.setVibratoDepth(this.depth);
+    this.valueEl.textContent = Math.round(this.depth * 100) + '%';
+    this._draw();
+  },
+
+  _draw() {
+    const canvas = this.canvas;
+    if (!canvas.width || !canvas.height) return;
+    const c  = canvas.getContext('2d');
+    const W  = canvas.width;
+    const H  = canvas.height;
+    const cx = W / 2;
+    const dpr = devicePixelRatio;
+
+    // Cap ellipse height (flat top/bottom edges of cylinder)
+    const capH = Math.max(H * 0.06, 6 * dpr);
+
+    c.clearRect(0, 0, W, H);
+
+    /* ── Cylinder body gradient ── */
+    const bodyGrad = c.createLinearGradient(0, 0, W, 0);
+    bodyGrad.addColorStop(0,    '#0e0e0e');
+    bodyGrad.addColorStop(0.1,  '#1c1c1c');
+    bodyGrad.addColorStop(0.35, '#2a2a2a');
+    bodyGrad.addColorStop(0.5,  '#323232');
+    bodyGrad.addColorStop(0.65, '#2a2a2a');
+    bodyGrad.addColorStop(0.9,  '#1c1c1c');
+    bodyGrad.addColorStop(1,    '#0e0e0e');
+    c.fillStyle = bodyGrad;
+    c.fillRect(0, capH, W, H - capH * 2);
+
+    /* ── Scrolling ridges (clip to body area) ── */
+    const bodyH = H - capH * 2;
+    const numRidges = 18;
+    const ridgeSpacing = bodyH / numRidges;
+    // _rot is a pixel offset that scrolls ridges
+    const offset = ((this._rot % ridgeSpacing) + ridgeSpacing) % ridgeSpacing;
+
+    c.save();
+    c.beginPath();
+    c.rect(0, capH, W, bodyH);
+    c.clip();
+
+    for (let i = -1; i <= numRidges + 1; i++) {
+      const y = capH + i * ridgeSpacing + offset;
+
+      // Groove shadow (darker line)
+      c.strokeStyle = '#0a0a0a';
+      c.lineWidth = 2 * dpr;
+      c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke();
+
+      // Ridge highlight (lighter line just above)
+      c.strokeStyle = '#3c3c3c';
+      c.lineWidth = 1 * dpr;
+      c.beginPath(); c.moveTo(0, y - 2 * dpr); c.lineTo(W, y - 2 * dpr); c.stroke();
+    }
+
+    // Orange accent marks every 5th ridge
+    for (let i = -1; i <= numRidges + 1; i++) {
+      if (((i + 100) % 5) !== 0) continue;
+      const y = capH + i * ridgeSpacing + offset - ridgeSpacing * 0.5;
+      c.strokeStyle = '#e8632a';
+      c.lineWidth = 2 * dpr;
+      c.beginPath();
+      c.moveTo(cx - 10 * dpr, y);
+      c.lineTo(cx + 10 * dpr, y);
+      c.stroke();
+    }
+
+    c.restore();
+
+    /* ── 3-D shading overlay (cylinder curvature) ── */
+    const shadeGrad = c.createLinearGradient(0, 0, W, 0);
+    shadeGrad.addColorStop(0,    'rgba(0,0,0,0.62)');
+    shadeGrad.addColorStop(0.14, 'rgba(0,0,0,0.18)');
+    shadeGrad.addColorStop(0.42, 'rgba(255,255,255,0.03)');
+    shadeGrad.addColorStop(0.50, 'rgba(255,255,255,0.11)');
+    shadeGrad.addColorStop(0.58, 'rgba(255,255,255,0.03)');
+    shadeGrad.addColorStop(0.86, 'rgba(0,0,0,0.18)');
+    shadeGrad.addColorStop(1,    'rgba(0,0,0,0.62)');
+    c.fillStyle = shadeGrad;
+    c.fillRect(0, capH, W, bodyH);
+
+    /* ── Top cap ellipse ── */
+    const topGrad = c.createLinearGradient(0, 0, W, 0);
+    topGrad.addColorStop(0,   '#0e0e0e');
+    topGrad.addColorStop(0.5, '#2c2c2c');
+    topGrad.addColorStop(1,   '#0e0e0e');
+    c.fillStyle = topGrad;
+    c.beginPath();
+    c.ellipse(cx, capH, cx, capH, 0, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = '#444';
+    c.lineWidth = 1 * dpr;
+    c.stroke();
+
+    /* ── Bottom cap ellipse ── */
+    const botGrad = c.createLinearGradient(0, 0, W, 0);
+    botGrad.addColorStop(0,   '#080808');
+    botGrad.addColorStop(0.5, '#1e1e1e');
+    botGrad.addColorStop(1,   '#080808');
+    c.fillStyle = botGrad;
+    c.beginPath();
+    c.ellipse(cx, H - capH, cx, capH, 0, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = '#2a2a2a';
+    c.lineWidth = 1 * dpr;
+    c.stroke();
+
+    /* ── Depth indicator arrow on right edge ── */
+    const indY = capH + bodyH * (1 - this.depth);
+    c.fillStyle = '#e8632a';
+    c.beginPath();
+    c.moveTo(W - 5 * dpr, indY - 4 * dpr);
+    c.lineTo(W,            indY);
+    c.lineTo(W - 5 * dpr, indY + 4 * dpr);
+    c.closePath();
+    c.fill();
+  },
+};
+
+/* ── Piano keyboard ───────────────────────────────────────────────────────── */
+const KeyboardUI = {
+  container:    null,
+  activeTouches: new Map(), // touchId → key element
+
+  init() {
+    this.container = document.getElementById('keyboard');
+    this._build();
+    this._bindTouch();
+    this._bindMouse();
+    window.addEventListener('resize', () => setTimeout(() => this._positionBlacks(), 50));
+    window.addEventListener('orientationchange', () => setTimeout(() => this._positionBlacks(), 200));
+  },
+
+  _build() {
+    const whiteWrap = document.getElementById('white-keys');
+    const blackWrap = document.getElementById('black-keys');
+
+    // Two full octaves (C3–B4) = 14 white + 1 top C5
+    for (let oct = 0; oct < 2; oct++) {
+      const base = BASE_MIDI + oct * 12;
+      WHITE_SEMI.forEach(s => {
+        const midi = base + s;
+        const el = document.createElement('div');
+        el.className = 'key white-key';
+        el.dataset.midi = midi;
+        if (s === 0) {
+          const lbl = document.createElement('span');
+          lbl.className = 'key-label';
+          lbl.textContent = 'C' + (Math.floor(midi / 12) - 1);
+          el.appendChild(lbl);
+        }
+        whiteWrap.appendChild(el);
+      });
+    }
+    // Top C5
+    const topC = document.createElement('div');
+    topC.className = 'key white-key';
+    topC.dataset.midi = BASE_MIDI + 24;
+    const topLbl = document.createElement('span');
+    topLbl.className = 'key-label';
+    topLbl.textContent = 'C5';
+    topC.appendChild(topLbl);
+    whiteWrap.appendChild(topC);
+
+    // Black keys: 5 per octave × 2 octaves = 10
+    for (let oct = 0; oct < 2; oct++) {
+      const base = BASE_MIDI + oct * 12;
+      BLACK_SEMI.forEach(s => {
+        const el = document.createElement('div');
+        el.className = 'key black-key';
+        el.dataset.midi = base + s;
+        blackWrap.appendChild(el);
+      });
+    }
+
+    requestAnimationFrame(() => this._positionBlacks());
+  },
+
+  _positionBlacks() {
+    const whites = Array.from(this.container.querySelectorAll('.white-key'));
+    const blacks = Array.from(this.container.querySelectorAll('.black-key'));
+    if (!whites.length || !whites[0].offsetWidth) return;
+
+    const kh = this.container.offsetHeight;
+    const bw = whites[0].offsetWidth * 0.62;
+    const bh = kh * 0.62;
+
+    blacks.forEach((el, i) => {
+      const wIdx = BLACK_AFTER_WHITE[i];
+      // Place black key centred on the seam between white[wIdx] and white[wIdx+1]
+      const x = whites[wIdx].offsetLeft + whites[wIdx].offsetWidth - bw * 0.5;
+      el.style.left   = x + 'px';
+      el.style.width  = bw + 'px';
+      el.style.height = bh + 'px';
+    });
+  },
+
+  _startNote(el) {
+    if (!el || el.classList.contains('active')) return;
+    el.classList.add('active');
+    if (el._voice) AudioEngine.releaseVoice(el._voice);
+    const midi = parseInt(el.dataset.midi);
+    el._voice = AudioEngine.createVoice(midi);
+    UIController.showNote(midiToName(midi + AppState.octaveShift * 12));
+  },
+
+  _stopNote(el) {
+    if (!el || !el.classList.contains('active')) return;
+    el.classList.remove('active');
+    AudioEngine.releaseVoice(el._voice);
+    el._voice = null;
+  },
+
+  _keyAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return null;
+    if (el.classList.contains('key')) return el;
+    return el.closest?.('.key') || null;
+  },
+
+  _bindTouch() {
+    const kb = this.container;
+
+    kb.addEventListener('touchstart', e => {
+      e.preventDefault();
+      AudioEngine.getCtx();
+      Array.from(e.changedTouches).forEach(t => {
+        const el = this._keyAt(t.clientX, t.clientY);
+        if (el) { this.activeTouches.set(t.identifier, el); this._startNote(el); }
+      });
+    }, { passive: false });
+
+    kb.addEventListener('touchmove', e => {
+      e.preventDefault();
+      Array.from(e.changedTouches).forEach(t => {
+        const prev = this.activeTouches.get(t.identifier);
+        const curr = this._keyAt(t.clientX, t.clientY);
+        if (curr !== prev) {
+          if (prev) this._stopNote(prev);
+          if (curr) { this.activeTouches.set(t.identifier, curr); this._startNote(curr); }
+          else       this.activeTouches.delete(t.identifier);
+        }
+      });
+    }, { passive: false });
+
+    const endAll = e => {
+      e.preventDefault();
+      Array.from(e.changedTouches).forEach(t => {
+        const el = this.activeTouches.get(t.identifier);
+        if (el) this._stopNote(el);
+        this.activeTouches.delete(t.identifier);
+      });
+    };
+    kb.addEventListener('touchend',    endAll, { passive: false });
+    kb.addEventListener('touchcancel', endAll, { passive: false });
+  },
+
+  _bindMouse() {
+    let held = null;
+    const kb = this.container;
+    kb.addEventListener('mousedown', e => {
+      AudioEngine.getCtx();
+      const el = this._keyAt(e.clientX, e.clientY);
+      if (el) { held = el; this._startNote(el); }
+    });
+    kb.addEventListener('mousemove', e => {
+      if (!held) return;
+      const el = this._keyAt(e.clientX, e.clientY);
+      if (el !== held) { this._stopNote(held); held = el; if (el) this._startNote(el); }
+    });
+    const up = () => { if (held) { this._stopNote(held); held = null; } };
+    kb.addEventListener('mouseup',    up);
+    kb.addEventListener('mouseleave', up);
+  },
+};
+
+/* ── Oscilloscope ─────────────────────────────────────────────────────────── */
+const Scope = {
+  canvas: null,
+  _raf:   null,
+
+  init() {
+    this.canvas = document.getElementById('waveform-display');
     this._resize();
+    this._loop();
     window.addEventListener('resize', () => this._resize());
-    this.drawIdle();
   },
 
   _resize() {
-    const dpr = window.devicePixelRatio || 1;
-    const rect = this.mainCanvas.getBoundingClientRect();
-    this.mainCanvas.width = rect.width * dpr;
-    this.mainCanvas.height = rect.height * dpr;
-    this.mainCtx.scale(dpr, dpr);
+    const c = this.canvas;
+    c.width  = Math.round(c.clientWidth  * devicePixelRatio);
+    c.height = Math.round(c.clientHeight * devicePixelRatio);
   },
 
-  drawIdle() {
-    const ctx = this.mainCtx;
-    const w = this.mainCanvas.getBoundingClientRect().width;
-    const h = this.mainCanvas.getBoundingClientRect().height;
-    ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = '#1e2e18';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, h / 2);
-    ctx.lineTo(w, h / 2);
-    ctx.stroke();
-  },
+  _loop() {
+    const draw = () => {
+      this._raf = requestAnimationFrame(draw);
+      const c   = this.canvas;
+      const ctx = c.getContext('2d');
+      const W   = c.width;
+      const H   = c.height;
 
-  extractWaveform(audioBuffer, samples = 300) {
-    const data = audioBuffer.getChannelData(0);
-    const step = Math.floor(data.length / samples);
-    const result = new Float32Array(samples);
-    for (let i = 0; i < samples; i++) {
-      let max = 0;
-      for (let j = 0; j < step; j++) {
-        const v = Math.abs(data[i * step + j]);
-        if (v > max) max = v;
+      ctx.fillStyle = '#0d0d0d';
+      ctx.fillRect(0, 0, W, H);
+
+      if (!AudioEngine.analyser) {
+        // flat line when no audio
+        ctx.strokeStyle = '#2a3a22';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
+        return;
       }
-      result[i] = max;
-    }
-    return result;
-  },
 
-  drawMain(waveformData, pad) {
-    if (this.playbackRaf) {
-      cancelAnimationFrame(this.playbackRaf);
-      this.playbackRaf = null;
-    }
-    const ctx = this.mainCtx;
-    const w = this.mainCanvas.getBoundingClientRect().width;
-    const h = this.mainCanvas.getBoundingClientRect().height;
-    ctx.clearRect(0, 0, w, h);
+      const buf = new Float32Array(AudioEngine.analyser.fftSize);
+      AudioEngine.analyser.getFloatTimeDomainData(buf);
 
-    if (!waveformData) { this.drawIdle(); return; }
-
-    ctx.strokeStyle = '#9ab08a';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    const mid = h / 2;
-    for (let i = 0; i < waveformData.length; i++) {
-      const x = (i / waveformData.length) * w;
-      const amp = waveformData[i] * mid * 0.9;
-      ctx.moveTo(x, mid - amp);
-      ctx.lineTo(x, mid + amp);
-    }
-    ctx.stroke();
-
-    if (pad) this._drawPlaybackLine(pad, waveformData, w, h);
-  },
-
-  startPlaybackLine(pad) {
-    if (this.playbackRaf) cancelAnimationFrame(this.playbackRaf);
-    const w = this.mainCanvas.getBoundingClientRect().width;
-    const h = this.mainCanvas.getBoundingClientRect().height;
-    const draw = () => {
-      const elapsed = AudioEngine.ctx.currentTime - pad.playbackStart;
-      const progress = Math.min(elapsed / pad.playbackDuration, 1);
-      if (!pad.waveformData) return;
-      this.drawMain(pad.waveformData);
-      const ctx = this.mainCtx;
-      const x = progress * w;
-      ctx.strokeStyle = '#e8632a';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#9ab08a';
+      ctx.lineWidth = 1.5 * devicePixelRatio;
+      ctx.shadowColor = '#5a7050';
+      ctx.shadowBlur  = 3 * devicePixelRatio;
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, h);
-      ctx.stroke();
-      if (progress < 1) this.playbackRaf = requestAnimationFrame(draw);
-    };
-    this.playbackRaf = requestAnimationFrame(draw);
-  },
-
-  _drawPlaybackLine(pad, waveformData, w, h) {},
-
-  drawThumbnail(canvas, waveformData) {
-    if (!canvas || !waveformData) return;
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    const w = rect.width;
-    const h = rect.height;
-    ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = '#9ab08a';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    const mid = h / 2;
-    for (let i = 0; i < waveformData.length; i++) {
-      const x = (i / waveformData.length) * w;
-      const amp = waveformData[i] * mid * 0.85;
-      ctx.moveTo(x, mid - amp);
-      ctx.lineTo(x, mid + amp);
-    }
-    ctx.stroke();
-  },
-
-  // Live oscilloscope during recording
-  liveRaf: null,
-  liveAnalyser: null,
-
-  startLive(analyser) {
-    this.liveAnalyser = analyser;
-    const data = new Float32Array(analyser.fftSize);
-    const ctx = this.mainCtx;
-    const draw = () => {
-      analyser.getFloatTimeDomainData(data);
-      const w = this.mainCanvas.getBoundingClientRect().width;
-      const h = this.mainCanvas.getBoundingClientRect().height;
-      ctx.clearRect(0, 0, w, h);
-      ctx.strokeStyle = '#c0392b';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      const step = w / data.length;
-      const mid = h / 2;
-      for (let i = 0; i < data.length; i++) {
-        const x = i * step;
-        const y = mid + data[i] * mid * 0.9;
+      for (let i = 0; i < buf.length; i++) {
+        const x = (i / buf.length) * W;
+        const y = (0.5 - buf[i] * 0.44) * H;
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
       ctx.stroke();
-      this.liveRaf = requestAnimationFrame(draw);
+      ctx.shadowBlur = 0;
     };
-    this.liveRaf = requestAnimationFrame(draw);
-  },
-
-  stopLive() {
-    if (this.liveRaf) { cancelAnimationFrame(this.liveRaf); this.liveRaf = null; }
-    this.liveAnalyser = null;
+    draw();
   },
 };
 
-// ── Recorder ──────────────────────────────────────────────────────────────────
-const Recorder = {
-  stream: null,
-  mediaRecorder: null,
-  chunks: [],
-  targetPad: null,
-  analyser: null,
-
-  async start(pad) {
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    } catch (e) {
-      UIController.setInfo('MIC DENIED');
-      UIController.setMode('play');
-      return;
-    }
-    const ctx = AudioEngine.getCtx();
-    this.analyser = ctx.createAnalyser();
-    this.analyser.fftSize = 512;
-    const src = ctx.createMediaStreamSource(this.stream);
-    src.connect(this.analyser);
-
-    this.chunks = [];
-    this.targetPad = pad;
-    this.mediaRecorder = new MediaRecorder(this.stream);
-    this.mediaRecorder.ondataavailable = e => { if (e.data.size > 0) this.chunks.push(e.data); };
-    this.mediaRecorder.onstop = () => this._finalize();
-    this.mediaRecorder.start(100);
-
-    pad.el.classList.add('is-recording');
-    AppState.isRecording = true;
-    AppState.recordingPadIndex = pad.index;
-    UIController.setInfo('● REC');
-    WaveformRenderer.startLive(this.analyser);
-  },
-
-  stop() {
-    if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') return;
-    this.mediaRecorder.stop();
-    this.stream.getTracks().forEach(t => t.stop());
-    WaveformRenderer.stopLive();
-    AppState.isRecording = false;
-    AppState.recordingPadIndex = null;
-  },
-
-  async _finalize() {
-    const pad = this.targetPad;
-    pad.el.classList.remove('is-recording');
-    UIController.setInfo('DECODING');
-
-    const mimeType = this.mediaRecorder.mimeType || 'audio/webm';
-    const blob = new Blob(this.chunks, { type: mimeType });
-    const ab = await blob.arrayBuffer();
-
-    try {
-      const buffer = await AudioEngine.decode(ab);
-      PadManager.assignBuffer(pad, buffer, ab);
-      UIController.setInfo('READY');
-    } catch (e) {
-      UIController.setInfo('ERR DECODE');
-    }
-    UIController.setMode('play');
-  },
-};
-
-// ── PadManager ────────────────────────────────────────────────────────────────
-const PadManager = {
-  pads: [],
-
-  build() {
-    const grid = document.getElementById('pad-grid');
-    grid.innerHTML = '';
-    this.pads = [];
-    for (let i = 0; i < PAD_COUNT; i++) {
-      const pad = {
-        index: i,
-        name: StorageManager.loadName(i),
-        audioBuffer: null,
-        waveformData: null,
-        rawBuffer: null,
-        el: null,
-        playbackStart: 0,
-        playbackDuration: 0,
-      };
-
-      const btn = document.createElement('button');
-      btn.className = 'pad';
-      btn.setAttribute('data-index', i);
-      btn.innerHTML = `
-        <canvas class="pad-wave"></canvas>
-        <span class="pad-dot"></span>
-        <span class="pad-number">${String(i + 1).padStart(2, '0')}</span>
-        <span class="pad-name-label">${pad.name}</span>
-      `;
-      grid.appendChild(btn);
-      pad.el = btn;
-      this.pads.push(pad);
-
-      btn.addEventListener('touchstart', e => { e.preventDefault(); this._onPadDown(pad); }, { passive: false });
-      btn.addEventListener('mousedown', e => { e.preventDefault(); this._onPadDown(pad); });
-
-      btn.addEventListener('touchend', e => { e.preventDefault(); this._onPadUp(pad); }, { passive: false });
-      btn.addEventListener('touchcancel', e => { e.preventDefault(); this._onPadUp(pad); }, { passive: false });
-      btn.addEventListener('mouseup', () => this._onPadUp(pad));
-      btn.addEventListener('mouseleave', () => this._onPadUp(pad));
-    }
-  },
-
-  _onPadDown(pad) {
-    AudioEngine.getCtx();
-    clearTimeout(AppState.longPressTimer);
-    const mode = AppState.mode;
-
-    if (mode === 'play') {
-      if (pad.audioBuffer) AudioEngine.play(pad);
-      UIController.selectPad(pad);
-      return;
-    }
-
-    if (mode === 'rec') {
-      if (!AppState.isRecording) {
-        Recorder.start(pad);
-        UIController.selectPad(pad);
-      } else if (AppState.recordingPadIndex === pad.index) {
-        Recorder.stop();
-      }
-      return;
-    }
-
-    if (mode === 'load') {
-      UIController.triggerLoad(pad);
-      return;
-    }
-
-    if (mode === 'clr') {
-      this.clearPad(pad);
-      UIController.selectPad(pad);
-      return;
-    }
-  },
-
-  _onPadUp(pad) {
-    if (AppState.mode === 'play') {
-      AudioEngine.stop(pad);
-    }
-  },
-
-  assignBuffer(pad, audioBuffer, rawBuffer) {
-    pad.audioBuffer = audioBuffer;
-    pad.rawBuffer = rawBuffer;
-    pad.waveformData = WaveformRenderer.extractWaveform(audioBuffer);
-    pad.el.classList.add('has-sample');
-    const thumbCanvas = pad.el.querySelector('.pad-wave');
-    WaveformRenderer.drawThumbnail(thumbCanvas, pad.waveformData);
-    StorageManager.savePadAudio(pad.index, rawBuffer);
-    if (AppState.activePadIndex === pad.index) {
-      WaveformRenderer.drawMain(pad.waveformData, pad);
-    }
-  },
-
-  clearPad(pad) {
-    pad.audioBuffer = null;
-    pad.waveformData = null;
-    pad.rawBuffer = null;
-    pad.el.classList.remove('has-sample');
-    const thumbCanvas = pad.el.querySelector('.pad-wave');
-    const ctx = thumbCanvas.getContext('2d');
-    ctx.clearRect(0, 0, thumbCanvas.width, thumbCanvas.height);
-    StorageManager.deletePadAudio(pad.index);
-    if (AppState.activePadIndex === pad.index) {
-      WaveformRenderer.drawMain(null);
-      UIController.setInfo('CLEARED');
-    }
-  },
-
-  async restoreAll() {
-    for (const pad of this.pads) {
-      const ab = await StorageManager.loadPadAudio(pad.index);
-      if (!ab) continue;
-      try {
-        const buffer = await AudioEngine.decode(ab);
-        pad.audioBuffer = buffer;
-        pad.rawBuffer = ab;
-        pad.waveformData = WaveformRenderer.extractWaveform(buffer);
-        pad.el.classList.add('has-sample');
-        WaveformRenderer.drawThumbnail(pad.el.querySelector('.pad-wave'), pad.waveformData);
-      } catch (e) {
-        // corrupted audio — skip
-      }
-    }
-  },
-};
-
-// ── UIController ──────────────────────────────────────────────────────────────
+/* ── UI controller ────────────────────────────────────────────────────────── */
 const UIController = {
-  modeButtons: {},
-  fileInput: null,
-  loadTargetPad: null,
-
   init() {
-    this.modeButtons = {
-      play: document.getElementById('mode-play'),
-      rec:  document.getElementById('mode-rec'),
-      load: document.getElementById('mode-load'),
-      clr:  document.getElementById('mode-clr'),
-    };
-
-    this.fileInput = document.getElementById('file-input');
-
-    Object.entries(this.modeButtons).forEach(([mode, btn]) => {
-      btn.addEventListener('click', () => this.setMode(mode));
-      btn.addEventListener('touchstart', e => { e.preventDefault(); this.setMode(mode); }, { passive: false });
-    });
-
-    this.fileInput.addEventListener('change', () => this._onFileChange());
-
-    // Tap pad name in display → rename selected pad
-    const nameDisplay = document.getElementById('pad-name-display');
-    nameDisplay.addEventListener('click', () => this._renameActive());
-    nameDisplay.addEventListener('touchstart', e => { e.preventDefault(); this._renameActive(); }, { passive: false });
-
-    document.getElementById('rename-confirm').addEventListener('click', () => this._confirmRename());
-    document.getElementById('rename-cancel').addEventListener('click', () => this._closeRename());
-    document.getElementById('rename-input').addEventListener('keydown', e => {
-      if (e.key === 'Enter') this._confirmRename();
-      if (e.key === 'Escape') this._closeRename();
-    });
-
-    this._startClock();
+    this._clock();
+    this._waveButtons();
+    this._octaveButtons();
   },
 
-  setMode(mode) {
-    if (AppState.isRecording) return; // don't switch while recording
-    AppState.mode = mode;
-    document.getElementById('mode-label').textContent = mode.toUpperCase();
-
-    Object.entries(this.modeButtons).forEach(([m, btn]) => {
-      btn.classList.toggle('active', m === mode);
-    });
-
-    const hints = { play: 'TAP TO PLAY', rec: 'TAP PAD → REC', load: 'TAP PAD → LOAD', clr: 'TAP PAD → CLR' };
-    this.setInfo(hints[mode] || '');
+  showNote(name) {
+    const el = document.getElementById('note-display');
+    if (el) el.textContent = name;
   },
 
-  selectPad(pad) {
-    AppState.activePadIndex = pad.index;
-    document.getElementById('pad-name-display').textContent = pad.name;
-    if (pad.waveformData) {
-      WaveformRenderer.drawMain(pad.waveformData, pad);
-    } else {
-      WaveformRenderer.drawMain(null);
-    }
-  },
-
-  setInfo(text) {
-    document.getElementById('te-info').textContent = text;
-  },
-
-  triggerLoad(pad) {
-    this.loadTargetPad = pad;
-    this.fileInput.click();
-  },
-
-  async _onFileChange() {
-    const file = this.fileInput.files[0];
-    if (!file || !this.loadTargetPad) { this.fileInput.value = ''; return; }
-    this.setInfo('LOADING');
-    const pad = this.loadTargetPad;
-    this.loadTargetPad = null;
-    try {
-      const ab = await file.arrayBuffer();
-      const buffer = await AudioEngine.decode(ab);
-      PadManager.assignBuffer(pad, buffer, ab);
-      this.selectPad(pad);
-      this.setInfo('LOADED');
-    } catch (e) {
-      this.setInfo('ERR FORMAT');
-    }
-    this.fileInput.value = '';
-    this.setMode('play');
-  },
-
-  _renameActive() {
-    if (AppState.activePadIndex === null) return;
-    this.openRename(PadManager.pads[AppState.activePadIndex]);
-  },
-
-  openRename(pad) {
-    this._renamePad = pad;
-    const input = document.getElementById('rename-input');
-    input.value = pad.name;
-    document.getElementById('rename-overlay').hidden = false;
-    setTimeout(() => { input.focus(); input.select(); }, 50);
-  },
-
-  _confirmRename() {
-    if (!this._renamePad) return;
-    const raw = document.getElementById('rename-input').value.trim().toUpperCase();
-    const name = raw || this._renamePad.name;
-    this._renamePad.name = name;
-    this._renamePad.el.querySelector('.pad-name-label').textContent = name;
-    StorageManager.saveName(this._renamePad.index, name);
-    if (AppState.activePadIndex === this._renamePad.index) {
-      document.getElementById('pad-name-display').textContent = name;
-    }
-    this._closeRename();
-  },
-
-  _closeRename() {
-    document.getElementById('rename-overlay').hidden = true;
-    this._renamePad = null;
-  },
-
-  _startClock() {
-    const el = document.getElementById('clock');
+  _clock() {
     const tick = () => {
-      const now = new Date();
-      const h = String(now.getHours()).padStart(2, '0');
-      const m = String(now.getMinutes()).padStart(2, '0');
-      el.textContent = `${h}:${m}`;
+      const d = new Date();
+      const h = String(d.getHours()).padStart(2, '0');
+      const m = String(d.getMinutes()).padStart(2, '0');
+      const el = document.getElementById('clock');
+      if (el) el.textContent = h + ':' + m;
     };
     tick();
-    setInterval(tick, 30000);
+    setInterval(tick, 15000);
+  },
+
+  _waveButtons() {
+    document.querySelectorAll('[data-wave]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-wave]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        AppState.waveform = btn.dataset.wave;
+        const lbl = document.getElementById('mode-label');
+        if (lbl) lbl.textContent = btn.dataset.wave.slice(0, 3).toUpperCase();
+      });
+    });
+  },
+
+  _octaveButtons() {
+    const updateInfo = () => {
+      const b = 3 + AppState.octaveShift;
+      const el = document.getElementById('te-info');
+      if (el) el.textContent = 'C' + b + '·B' + (b + 1);
+    };
+    document.getElementById('btn-oct-down')?.addEventListener('click', () => {
+      if (AppState.octaveShift > -2) { AppState.octaveShift--; updateInfo(); }
+    });
+    document.getElementById('btn-oct-up')?.addEventListener('click', () => {
+      if (AppState.octaveShift < 2)  { AppState.octaveShift++; updateInfo(); }
+    });
   },
 };
 
-// ── Bootstrap ─────────────────────────────────────────────────────────────────
-(async () => {
-  await StorageManager.open().catch(() => {});
-  WaveformRenderer.init();
-  PadManager.build();
+/* ── Bootstrap ────────────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
   UIController.init();
-
-  // Restore saved pads after first user gesture (AudioContext needs it)
-  const restore = async () => {
-    document.removeEventListener('touchstart', restore);
-    document.removeEventListener('mousedown', restore);
-    await PadManager.restoreAll();
-  };
-  document.addEventListener('touchstart', restore, { once: true, passive: true });
-  document.addEventListener('mousedown', restore, { once: true });
-})();
+  Scope.init();
+  KeyboardUI.init();
+  WheelUI.init();
+});

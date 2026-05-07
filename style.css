@@ -11,21 +11,18 @@
   --bg:          #1a1a1a;
   --device-bg:   #212121;
   --surface:     #2a2a2a;
-  --surface-hi:  #313131;
   --border:      #3a3a3a;
-  --border-hi:   #4a4a4a;
-  --text-pri:    #c8c8c8;
   --text-dim:    #585858;
   --text-muted:  #3e3e3e;
   --orange:      #e8632a;
   --orange-dim:  #7a3010;
-  --red:         #c0392b;
-  --white:       #f0f0f0;
   --display-bg:  #0d0d0d;
   --display-txt: #9ab08a;
   --display-dim: #3a4a32;
-  --pad-radius:  4px;
   --font:        'Courier New', 'Courier', monospace;
+  --key-white:   #d6d2c6;
+  --key-white-pr:#bab6aa;
+  --key-border:  #4a4848;
 }
 
 html, body {
@@ -37,7 +34,7 @@ html, body {
   font-family: var(--font);
 }
 
-/* ── Device shell ────────────────────────────────────── */
+/* ── Device shell ─────────────────────────────────────────────────────────── */
 .device {
   width: 100%;
   height: var(--app-height, 100vh);
@@ -47,21 +44,21 @@ html, body {
   overflow: hidden;
 }
 
-/* ── Panel (header + display + speaker + controls) ───── */
-.te-panel {
+/* ── Top panel (header + display + controls) ──────────────────────────────── */
+.top-panel {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  border-bottom: 2px solid #000;
 }
 
-/* ── Header ──────────────────────────────────────────── */
+/* ── Header ───────────────────────────────────────────────────────────────── */
 .te-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 16px 8px;
+  padding: 8px 14px 6px;
   border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
 }
 
 .te-logo {
@@ -85,86 +82,60 @@ html, body {
 
 .te-batt {
   font-size: 9px;
-  letter-spacing: 0.05em;
   color: var(--text-muted);
 }
 
-/* ── Display ─────────────────────────────────────────── */
+/* ── Display (oscilloscope) ───────────────────────────────────────────────── */
 .te-display {
   background: var(--display-bg);
-  padding: 10px 14px 8px;
-  border-bottom: 2px solid #000;
-  flex-shrink: 0;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid #000;
 }
 
 .te-status-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 .mode-label {
   font-size: 9px;
   letter-spacing: 0.35em;
   color: var(--orange);
-  min-width: 32px;
+  min-width: 30px;
 }
 
-.pad-name-display {
-  font-size: 10px;
-  letter-spacing: 0.15em;
+.note-display {
+  font-size: 11px;
+  letter-spacing: 0.2em;
   color: var(--display-txt);
   text-align: center;
   flex: 1;
   padding: 0 8px;
-  cursor: pointer;
-  touch-action: manipulation;
-  border-bottom: 1px solid var(--display-dim);
 }
 
 .te-info {
   font-size: 9px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.15em;
   color: var(--display-dim);
   text-align: right;
-  min-width: 40px;
+  min-width: 44px;
 }
 
 .waveform-display {
   display: block;
   width: 100%;
-  height: 60px;
-  border: 1px solid #1a1a1a;
+  height: 44px;
   background: var(--display-bg);
-  border-radius: 2px;
+  border-radius: 1px;
 }
 
-/* ── Speaker strip ───────────────────────────────────── */
-.te-speaker-strip {
-  height: 16px;
-  display: flex;
-  align-items: center;
-  padding: 0 14px;
-  flex-shrink: 0;
-}
-
-.speaker-dots {
-  flex: 1;
-  height: 4px;
-  background-image: radial-gradient(circle, #333 1px, transparent 1px);
-  background-size: 5px 5px;
-  border-radius: 2px;
-  opacity: 0.7;
-}
-
-/* ── Footer Controls ─────────────────────────────────── */
+/* ── Controls row ─────────────────────────────────────────────────────────── */
 .te-controls {
   display: flex;
-  gap: 6px;
-  padding: 6px 10px 8px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
+  gap: 4px;
+  padding: 5px 8px 6px;
 }
 
 .ctrl-btn {
@@ -174,9 +145,9 @@ html, body {
   border-radius: 3px;
   color: var(--text-dim);
   font-family: var(--font);
-  font-size: 9px;
-  letter-spacing: 0.25em;
-  padding: 9px 4px;
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  padding: 7px 2px;
   cursor: pointer;
   touch-action: manipulation;
   box-shadow:
@@ -196,219 +167,161 @@ html, body {
   background: #1e1108;
 }
 
-/* ── Pad Grid ────────────────────────────────────────── */
-/* Portrait: 3 cols × 4 rows */
-.pad-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(4, 1fr);
-  gap: 7px;
-  padding: 10px;
+/* ── Bottom section (wheel + keys) ───────────────────────────────────────── */
+.bottom-section {
   flex: 1;
+  display: flex;
+  flex-direction: row;
   min-height: 0;
-  min-width: 0;
+  overflow: hidden;
 }
 
-/* ── Pad Button ──────────────────────────────────────── */
-.pad {
-  position: relative;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--pad-radius);
-  cursor: pointer;
-  touch-action: manipulation;
+/* ── Vibrato wheel panel ──────────────────────────────────────────────────── */
+.wheel-panel {
+  width: 62px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  padding: 0 0 5px 6px;
-  min-height: 0;
+  align-items: center;
+  padding: 6px 5px 5px;
+  border-right: 1px solid var(--border);
+  background: #1c1c1c;
+  gap: 4px;
+}
+
+.wheel-label {
+  font-size: 6px;
+  letter-spacing: 0.28em;
+  color: var(--text-muted);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.vibrato-wheel {
+  flex: 1;
+  width: 100%;
+  cursor: ns-resize;
+  touch-action: none;
+  display: block;
+  border-radius: 5px;
+}
+
+.wheel-value {
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: var(--orange);
+  text-align: center;
+  flex-shrink: 0;
+  min-height: 11px;
+}
+
+/* ── Keyboard wrap ────────────────────────────────────────────────────────── */
+.keyboard-wrap {
+  flex: 1;
+  padding: 6px 7px 7px 4px;
   min-width: 0;
+}
+
+/* ── Keyboard container ───────────────────────────────────────────────────── */
+.keyboard {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  border-radius: 3px;
   overflow: hidden;
+  border: 1px solid #111;
+  background: #111;
+}
+
+/* ── White keys ───────────────────────────────────────────────────────────── */
+.white-keys {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.white-key {
+  flex: 1;
+  background: var(--key-white);
+  border-right: 1px solid var(--key-border);
+  border-radius: 0 0 4px 4px;
+  cursor: pointer;
+  touch-action: none;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 5px;
   box-shadow:
-    inset 0 1px 0 #383838,
-    inset 0 -2px 0 #111,
-    0 2px 5px rgba(0,0,0,0.55);
-  transition: box-shadow 70ms ease, background 70ms ease;
+    inset 0 -3px 0 rgba(0,0,0,0.22),
+    inset 1px 0 0 rgba(255,255,255,0.18);
+  transition: background 25ms ease, box-shadow 25ms ease;
 }
 
-.pad:active,
-.pad.is-playing {
+.white-key:last-child {
+  border-right: none;
+}
+
+.white-key.active {
+  background: var(--key-white-pr);
   box-shadow:
-    inset 0 2px 6px rgba(0,0,0,0.75),
-    0 1px 2px rgba(0,0,0,0.35);
-  background: var(--surface-hi);
+    inset 0 3px 6px rgba(0,0,0,0.3),
+    inset 0 -1px 0 rgba(0,0,0,0.1);
 }
 
-.pad.is-playing {
-  border-color: var(--orange-dim);
+.white-key.active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(232, 99, 42, 0.10);
+  border-radius: 0 0 4px 4px;
+  pointer-events: none;
 }
 
-/* Waveform thumbnail */
-.pad-wave {
+.key-label {
+  font-size: 7px;
+  letter-spacing: 0.03em;
+  color: rgba(0,0,0,0.38);
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Black keys ───────────────────────────────────────────────────────────── */
+.black-keys {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
-  height: 60%;
+  height: 100%;
   pointer-events: none;
-  opacity: 0.55;
 }
 
-/* Pad number */
-.pad-number {
-  font-size: 8px;
-  letter-spacing: 0.2em;
-  color: var(--text-muted);
-  line-height: 1;
-  margin-bottom: 2px;
-  position: relative;
-  z-index: 1;
-}
-
-/* Pad name */
-.pad-name-label {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--text-pri);
-  line-height: 1;
-  position: relative;
-  z-index: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: calc(100% - 14px);
-}
-
-/* State dot */
-.pad-dot {
+.black-key {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border);
-  transition: background 200ms ease;
+  top: 0;
+  background: linear-gradient(180deg, #222 0%, #141414 55%, #090909 100%);
+  border: 1px solid #1e1e1e;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  cursor: pointer;
+  touch-action: none;
+  pointer-events: all;
+  z-index: 10;
+  box-shadow:
+    2px 5px 10px rgba(0,0,0,0.85),
+    inset 1px 0 0 rgba(255,255,255,0.05),
+    inset -1px 0 0 rgba(0,0,0,0.6),
+    inset 0 1px 0 #333;
+  transition: background 25ms ease, box-shadow 25ms ease;
 }
 
-.pad.has-sample .pad-dot  { background: var(--orange); }
-.pad.is-recording .pad-dot {
-  background: var(--red);
-  animation: pulse-dot 0.55s infinite alternate;
-}
-.pad.is-playing .pad-dot  { background: var(--white); }
-
-@keyframes pulse-dot { to { opacity: 0.15; } }
-
-/* ── Rename overlay ──────────────────────────────────── */
-.rename-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
+.black-key.active {
+  background: linear-gradient(180deg, #3d1a00 0%, #2a1000 55%, #150800 100%);
+  box-shadow:
+    1px 2px 4px rgba(0,0,0,0.7),
+    inset 0 2px 5px rgba(0,0,0,0.6);
 }
 
-.rename-overlay[hidden] { display: none; }
-
-.rename-box {
-  background: var(--surface);
-  border: 1px solid var(--border-hi);
-  border-radius: 4px;
-  padding: 20px 20px 16px;
-  width: 240px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.8);
-}
-
-.rename-label {
-  font-size: 9px;
-  letter-spacing: 0.35em;
-  color: var(--text-dim);
-  margin-bottom: 10px;
-}
-
-.rename-input {
-  width: 100%;
-  background: var(--display-bg);
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  color: var(--display-txt);
-  font-family: var(--font);
-  font-size: 16px;
-  letter-spacing: 0.1em;
-  padding: 8px 10px;
-  outline: none;
-  text-transform: uppercase;
-  margin-bottom: 12px;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.rename-input:focus { border-color: var(--orange-dim); }
-
-.rename-actions {
-  display: flex;
-  gap: 8px;
-}
-
-/* ── Scrollbar hide ──────────────────────────────────── */
+/* ── Scrollbar hide ───────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { display: none; }
-
-/* ── Landscape layout ────────────────────────────────── */
-@media (orientation: landscape) {
-  .device {
-    flex-direction: row;
-  }
-
-  /* Left sidebar */
-  .te-panel {
-    width: min(200px, 30vw);
-    flex-shrink: 0;
-    border-right: 1px solid var(--border);
-  }
-
-  .waveform-display {
-    height: 48px;
-  }
-
-  /* Speaker strip: small fixed strip */
-  .te-speaker-strip {
-    flex: 1;
-    height: auto;
-    min-height: 8px;
-    max-height: 32px;
-    padding: 4px 14px;
-    align-items: center;
-  }
-
-  .speaker-dots {
-    width: 100%;
-    height: 100%;
-  }
-
-  /* Controls stack vertically, fill remaining sidebar space */
-  .te-controls {
-    flex-direction: column;
-    padding: 6px 8px 8px;
-    gap: 4px;
-    flex: 1;
-  }
-
-  .ctrl-btn {
-    flex: 1;
-    width: 100%;
-    padding: 0 4px;
-    min-height: 0;
-  }
-
-  /* Pad grid: 4 cols × 3 rows, fills all remaining space */
-  .pad-grid {
-    flex: 1;
-    grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(3, 1fr);
-    padding: 10px;
-    gap: 6px;
-  }
-}
